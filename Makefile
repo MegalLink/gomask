@@ -1,4 +1,4 @@
-.PHONY: test coverage coverage-html clean
+.PHONY: test coverage coverage-html test-benchmark
 
 # Default target
 all: test
@@ -6,6 +6,10 @@ all: test
 # Run all tests
 test:
 	go test ./...
+
+# Run benchmark tests
+test-benchmark:
+	go test -bench=. -benchmem ./...
 
 # Run tests with coverage and display summary
 coverage:
@@ -17,7 +21,3 @@ coverage:
 coverage-html: coverage
 	go tool cover -html=coverage/coverage.out -o coverage/coverage.html
 	open coverage/coverage.html
-
-# Clean coverage files
-clean:
-	rm -rf coverage/

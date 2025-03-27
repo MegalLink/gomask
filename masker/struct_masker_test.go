@@ -3,6 +3,9 @@ package masker
 
 import (
 	"encoding/json"
+	"reflect"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -59,7 +62,7 @@ func TestMaskStruct(t *testing.T) {
 	}
 
 	t.Log("Before masking:", string(res))
-	maskedStruct := MaskStruct(example)
+	maskedStruct := NewMasker().MaskStruct(example)
 	resMasked, err := json.Marshal(maskedStruct)
 	if err != nil {
 		t.FailNow()
@@ -104,6 +107,7 @@ func TestMaskStruct_with_bad_fields(t *testing.T) {
 		PointerString      *string        `mask:"all"`
 		OtherPointerString *string        `mask:"all"`
 		PointerNilString   *string        `mask:"all"`
+		EmptyRegex         string         `mask:"regex"`
 	}
 	pointerString := new(string)
 	*pointerString = "test"
@@ -133,7 +137,7 @@ func TestMaskStruct_with_bad_fields(t *testing.T) {
 	}
 
 	t.Log("Before masking:", string(res))
-	maskedStruct := MaskStruct(example)
+	maskedStruct := NewMasker().MaskStruct(example)
 	resMasked, err := json.Marshal(maskedStruct)
 	if err != nil {
 		t.FailNow()
@@ -158,6 +162,67 @@ func TestMaskStruct_with_bad_fields(t *testing.T) {
 				},
 				Email: "XXXXXXXX@example.com",
 			},
+		},
+		maskedStruct,
+	)
+}
+
+type MaskCard struct{}
+
+func (m *MaskCard) Mask(value string, maskChar string, tags []string) reflect.Value {
+	if len(value) < 8 {
+		return reflect.ValueOf(strings.Repeat(maskChar, len(value)-1) + value[len(value)-1:])
+	}
+
+	firstVisible := 4
+	lastVisible := 4
+
+	if len(tags) > 1 {
+		parts := strings.Split(tags[1], "-")
+		if len(parts) == 2 {
+			if first, err := strconv.Atoi(parts[0]); err == nil && first > 0 {
+				firstVisible = first
+			}
+			if last, err := strconv.Atoi(parts[1]); err == nil && last > 0 {
+				lastVisible = last
+			}
+		}
+	}
+
+	if firstVisible+lastVisible > len(value) {
+		return reflect.ValueOf(value)
+	}
+
+	maskedPart := strings.Repeat(maskChar, len(value)-firstVisible-lastVisible)
+	return reflect.ValueOf(value[:firstVisible] + maskedPart + value[len(value)-lastVisible:])
+}
+
+type EspecialStruct struct {
+	CardNumber string `mask:"card_number"`
+}
+
+func TestMaskCustom(t *testing.T) {
+	masker := NewMasker()
+	masker.RegisterMasker("card_number", &MaskCard{})
+	in := &EspecialStruct{
+		CardNumber: "1234567890123456",
+	}
+
+	res, err := json.Marshal(in)
+	if err != nil {
+		t.FailNow()
+	}
+
+	t.Log("Before masking:", string(res))
+	maskedStruct := masker.MaskStruct(in)
+	resMasked, err := json.Marshal(maskedStruct)
+	if err != nil {
+		t.FailNow()
+	}
+	t.Log("After masking:", string(resMasked))
+	assert.Equal(t,
+		EspecialStruct{
+			CardNumber: "1234********3456",
 		},
 		maskedStruct,
 	)

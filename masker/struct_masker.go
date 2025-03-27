@@ -2,11 +2,42 @@
 package masker
 
 import (
+	"fmt"
 	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 )
+
+type MaskerManager struct {
+	maskerRegistry     map[string]Masker
+	maskerRegistryLock sync.RWMutex
+}
+
+// Masker defines the interface for all masking strategies
+type Masker interface {
+	Mask(value string, maskChar string, tags []string) reflect.Value
+}
+
+// RegisterMasker registers a new masking strategy with the given name
+func (m *MaskerManager) RegisterMasker(name string, masker Masker) {
+	m.maskerRegistryLock.Lock()
+	defer m.maskerRegistryLock.Unlock()
+	m.maskerRegistry[name] = masker
+}
+
+// GetMasker retrieves a masking strategy by name
+func (m *MaskerManager) GetMasker(name string) (Masker, error) {
+	m.maskerRegistryLock.RLock()
+	defer m.maskerRegistryLock.RUnlock()
+
+	masker, exists := m.maskerRegistry[name]
+	if !exists {
+		return nil, fmt.Errorf("masker %s not registered", name)
+	}
+	return masker, nil
+}
 
 // MaskStruct recursively creates a masked copy of the struct tagged with "mask".
 // It traverses the struct fields and applies masking based on the tags specified.
@@ -31,14 +62,33 @@ import (
 //	    Phone string `mask:"last,4" maskTag:"#"`  // Masks last 4 digits with #
 //	}
 //	original := MyStruct{Name: "John Doe", Age: 30, Phone: "1234567890"}
-//	masked := MaskStruct(original).(MyStruct)
+//	masker := NewMasker()
+//	masked := masker.MaskStruct(original).(MyStruct)
 //	// masked => MyStruct{Name: "***** ***", Age: 30, Phone: "123456####"}
-func MaskStruct(v interface{}) interface{} {
-	return maskValue(reflect.ValueOf(v)).Interface()
+
+func NewMasker() *MaskerManager {
+	maskerManager := &MaskerManager{
+		maskerRegistry:     make(map[string]Masker),
+		maskerRegistryLock: sync.RWMutex{},
+	}
+
+	maskerManager.RegisterMasker("all", &MaskAll{})
+	maskerManager.RegisterMasker("regex", &MaskRegex{})
+	maskerManager.RegisterMasker("first", &MaskFirst{})
+	maskerManager.RegisterMasker("last", &MaskLast{})
+	maskerManager.RegisterMasker("corners", &MaskCorners{})
+	maskerManager.RegisterMasker("between", &MaskBetween{})
+
+	return maskerManager
+}
+
+// MaskStruct is a convenience function that uses the default masker
+func (m *MaskerManager) MaskStruct(v interface{}) interface{} {
+	return m.maskValue(reflect.ValueOf(v)).Interface()
 }
 
 // maskValue creates a masked copy of the reflect.Value, handling both structs and pointers.
-func maskValue(v reflect.Value) reflect.Value {
+func (m *MaskerManager) maskValue(v reflect.Value) reflect.Value {
 	if v.Kind() == reflect.Ptr {
 		v = v.Elem()
 	}
@@ -54,16 +104,16 @@ func maskValue(v reflect.Value) reflect.Value {
 		maskCharTag := fieldType.Tag.Get("maskTag")
 
 		if maskTag != "" {
-			newStruct.Field(i).Set(maskField(field, maskTag, maskCharTag))
+			newStruct.Field(i).Set(m.maskField(field, maskTag, maskCharTag))
 		} else if field.Kind() == reflect.Struct || (field.Kind() == reflect.Ptr && field.Elem().Kind() == reflect.Struct) {
 			if field.Kind() == reflect.Ptr {
 				if !field.IsNil() {
 					newField := reflect.New(field.Type().Elem())
-					newField.Elem().Set(maskValue(field.Elem()))
+					newField.Elem().Set(m.maskValue(field.Elem()))
 					newStruct.Field(i).Set(newField)
 				}
 			} else {
-				newStruct.Field(i).Set(maskValue(field))
+				newStruct.Field(i).Set(m.maskValue(field))
 			}
 		} else {
 			newStruct.Field(i).Set(field)
@@ -73,8 +123,8 @@ func maskValue(v reflect.Value) reflect.Value {
 	return newStruct
 }
 
-// maskField creates a masked copy of a single field based on its type and tag instructions.
-func maskField(field reflect.Value, maskTag, maskCharTag string) reflect.Value {
+// maskField method for MaskerManager
+func (m *MaskerManager) maskField(field reflect.Value, maskTag, maskCharTag string) reflect.Value {
 	if maskCharTag == "" {
 		maskCharTag = "*"
 	}
@@ -83,57 +133,12 @@ func maskField(field reflect.Value, maskTag, maskCharTag string) reflect.Value {
 	case reflect.String:
 		tagParts := strings.Split(maskTag, ",")
 		method := tagParts[0]
-		switch method {
-		case "all":
-			return reflect.ValueOf(MaskStringAll(field.String(), maskCharTag))
-		case "regex":
-			if len(tagParts) > 1 {
-				return reflect.ValueOf(MaskStringRegex(field.String(), tagParts[1], maskCharTag))
-			}
-		case "first":
-			if len(tagParts) > 1 {
-				if n, err := strconv.Atoi(tagParts[1]); err == nil {
-					return reflect.ValueOf(MaskStringFirst(field.String(), n, maskCharTag))
-				}
-			} else {
-				return reflect.ValueOf(MaskStringFirst(field.String(), 1, maskCharTag))
-			}
-		case "last":
-			if len(tagParts) > 1 {
-				if n, err := strconv.Atoi(tagParts[1]); err == nil {
-					return reflect.ValueOf(MaskStringLast(field.String(), n, maskCharTag))
-				}
-			} else {
-				return reflect.ValueOf(MaskStringLast(field.String(), 1, maskCharTag))
-			}
-		case "corners":
-			if len(tagParts) > 1 {
-				cornerParts := strings.Split(tagParts[1], "-")
-				if len(cornerParts) == 2 {
-					if first, err1 := strconv.Atoi(cornerParts[0]); err1 == nil {
-						if last, err2 := strconv.Atoi(cornerParts[1]); err2 == nil {
-							return reflect.ValueOf(MaskStringCorners(field.String(), first, last, maskCharTag))
-						}
-					}
-				}
-			} else {
-				return reflect.ValueOf(MaskStringCorners(field.String(), 1, 1, maskCharTag))
-			}
-		case "between":
-			if len(tagParts) > 1 {
-				cornerParts := strings.Split(tagParts[1], "-")
-				if len(cornerParts) == 2 {
-					if first, err1 := strconv.Atoi(cornerParts[0]); err1 == nil {
-						if last, err2 := strconv.Atoi(cornerParts[1]); err2 == nil {
-							return reflect.ValueOf(MaskAllExceptCorners(field.String(), first, last, maskCharTag))
-						}
-					}
-				}
-			} else {
-				return reflect.ValueOf(MaskAllExceptCorners(field.String(), 1, 1, maskCharTag))
-			}
-		}
 
+		masker, err := m.GetMasker(method)
+		if err == nil {
+			return masker.Mask(field.String(), maskCharTag, tagParts)
+		}
+		// If masker not found, return original field
 		return field
 
 	default:
@@ -141,9 +146,25 @@ func maskField(field reflect.Value, maskTag, maskCharTag string) reflect.Value {
 	}
 }
 
+type MaskAll struct{}
+
+func (m *MaskAll) Mask(value string, maskChar string, tags []string) reflect.Value {
+	return reflect.ValueOf(MaskStringAll(value, maskChar))
+}
+
 // MaskStringAll masks all characters in the string.
 func MaskStringAll(s, maskChar string) string {
 	return strings.Repeat(maskChar, len(s))
+}
+
+type MaskRegex struct{}
+
+func (m *MaskRegex) Mask(value string, maskChar string, tags []string) reflect.Value {
+	if len(tags) > 1 {
+		return reflect.ValueOf(MaskStringRegex(value, tags[1], maskChar))
+	}
+
+	return reflect.ValueOf(value)
 }
 
 // MaskStringRegex applies the regex-based masking to a string.
@@ -158,12 +179,36 @@ func MaskStringRegex(s, regex, maskChar string) string {
 	})
 }
 
+type MaskFirst struct{}
+
+func (m *MaskFirst) Mask(value string, maskChar string, tags []string) reflect.Value {
+	if len(tags) > 1 {
+		if n, err := strconv.Atoi(tags[1]); err == nil {
+			return reflect.ValueOf(MaskStringFirst(value, n, maskChar))
+		}
+	}
+
+	return reflect.ValueOf(MaskStringFirst(value, 1, maskChar))
+}
+
 // MaskStringFirst masks the first n characters in the string.
 func MaskStringFirst(s string, n int, maskChar string) string {
 	if len(s) <= n {
 		return strings.Repeat(maskChar, len(s))
 	}
 	return strings.Repeat(maskChar, n) + s[n:]
+}
+
+type MaskLast struct{}
+
+func (m *MaskLast) Mask(value string, maskChar string, tags []string) reflect.Value {
+	if len(tags) > 1 {
+		if n, err := strconv.Atoi(tags[1]); err == nil {
+			return reflect.ValueOf(MaskStringLast(value, n, maskChar))
+		}
+	}
+
+	return reflect.ValueOf(MaskStringLast(value, 1, maskChar))
 }
 
 // MaskStringLast masks the last n characters in the string.
@@ -174,6 +219,23 @@ func MaskStringLast(s string, n int, maskChar string) string {
 	return s[:len(s)-n] + strings.Repeat(maskChar, n)
 }
 
+type MaskCorners struct{}
+
+func (m *MaskCorners) Mask(value string, maskChar string, tags []string) reflect.Value {
+	if len(tags) > 1 {
+		cornerParts := strings.Split(tags[1], "-")
+		if len(cornerParts) == 2 {
+			if first, err1 := strconv.Atoi(cornerParts[0]); err1 == nil {
+				if last, err2 := strconv.Atoi(cornerParts[1]); err2 == nil {
+					return reflect.ValueOf(MaskStringCorners(value, first, last, maskChar))
+				}
+			}
+		}
+	}
+
+	return reflect.ValueOf(MaskStringCorners(value, 1, 1, maskChar))
+}
+
 // MaskStringCorners masks the first n and last m characters in the string.
 func MaskStringCorners(s string, n, m int, maskChar string) string {
 	if len(s) <= n+m {
@@ -182,12 +244,27 @@ func MaskStringCorners(s string, n, m int, maskChar string) string {
 	return strings.Repeat(maskChar, n) + s[n:len(s)-m] + strings.Repeat(maskChar, m)
 }
 
+type MaskBetween struct{}
+
+func (m *MaskBetween) Mask(value string, maskChar string, tags []string) reflect.Value {
+	if len(tags) > 1 {
+		betweenParts := strings.Split(tags[1], "-")
+		if len(betweenParts) == 2 {
+			if first, err1 := strconv.Atoi(betweenParts[0]); err1 == nil {
+				if last, err2 := strconv.Atoi(betweenParts[1]); err2 == nil {
+					return reflect.ValueOf(MaskAllExceptCorners(value, first, last, maskChar))
+				}
+			}
+		}
+	}
+
+	return reflect.ValueOf(MaskAllExceptCorners(value, 1, 1, maskChar))
+}
+
 // MaskAllExceptCorners  masks all except the first n and last m characters in the string.
 func MaskAllExceptCorners(s string, n, m int, maskChar string) string {
 	if len(s) <= n+m {
-		return strings.Repeat(maskChar, len(s))
+		return s
 	}
-
-	maskedPart := strings.Repeat(maskChar, len(s)-n-m)
-	return s[:n] + maskedPart + s[len(s)-m:]
+	return s[:n] + strings.Repeat(maskChar, len(s)-n-m) + s[len(s)-m:]
 }
