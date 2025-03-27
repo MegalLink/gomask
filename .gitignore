@@ -42,3 +42,9 @@ dist/
 # Environment variables
 .env
 .env.local
+
+# Coverage reports
+coverage/
+*.out
+*.html
+coverage.txt
