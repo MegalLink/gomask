@@ -144,6 +144,7 @@ func (m *MaskCard) Mask(value string, maskChar string, tags []string) reflect.Va
 // Register and use your custom masker
 type PaymentInfo struct {
     CardNumber string `mask:"card_number"`
+    CardNumber2 string `mask:"card_number,2-3"` // Show first 2 and last 3 digits
 }
 
 masker := masker.NewMasker()
@@ -151,10 +152,12 @@ masker.RegisterMasker("card_number", &MaskCard{})
 
 payment := PaymentInfo{
     CardNumber: "1234567890123456",
+    CardNumber2: "1234567890123456",
 }
 
 maskedPayment := masker.MaskStruct(payment).(PaymentInfo)
 // CardNumber will be "1234********3456"
+// CardNumber2 will be "12***********456"
 ```
 
 ## Available Masking Methods
