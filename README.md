@@ -144,7 +144,7 @@ func (m *MaskCard) Mask(value string, maskChar string, tags []string) reflect.Va
 // Register and use your custom masker
 type PaymentInfo struct {
     CardNumber string `mask:"card_number"`
-    CardNumber2 string `mask:"card_number,2-3"` // Show first 2 and last 3 digits
+    CardNumber2 string `mask:"card_number,2-3"` // Show first 2 and last 3 digits, the "-" sign depends of parse options you use in your custom masker function like in the example above at split tags
 }
 
 masker := masker.NewMasker()
