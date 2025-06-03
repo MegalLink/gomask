@@ -1,31 +1,34 @@
 # GoMask
 
-GoMask is a Go library that provides functionality to recursively mask struct fields based on tags. It allows you to easily mask sensitive data in your structs before logging, displaying, or transmitting them.
+[![Go Reference](https://pkg.go.dev/badge/github.com/MegalLink/gomask.svg)](https://pkg.go.dev/github.com/MegalLink/gomask)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 
-## Installation
+GoMask is a powerful and flexible Go library designed to help you protect sensitive data by masking struct fields based on simple tag annotations. It's perfect for logging, displaying, or transmitting data while maintaining security and privacy.
 
-To install the library, use the standard Go module installation:
+## 📦 Installation
+
+Add GoMask to your Go module:
 
 ```bash
 go get github.com/MegalLink/gomask
 ```
 
-## Features
+## ✨ Features
 
-- Mask struct fields using simple tag annotations
-- Support for nested structs and pointers
-- Multiple masking strategies:
-  - `all`: Mask all characters in a string
-  - `regex`: Mask characters based on a regular expression pattern
-  - `first`: Mask the first n characters in a string
-  - `last`: Mask the last n characters in a string
-  - `corners`: Mask the first n and last m characters in a string
-  - `between`: Mask all except the first n and last m characters in a string
-- Custom masking character via `maskTag` tag
-- Extensible architecture for custom masking strategies
-- Thread-safe implementation
+- **Simple Tag-Based Masking**: Annotate struct fields with `mask` tags to define masking behavior
+- **Nested Structures**: Seamlessly handles nested structs and pointers
+- **Multiple Built-in Strategies**:
+  - `all`: Completely masks the entire string
+  - `regex`: Masks based on regular expression patterns
+  - `first`: Masks the first n characters
+  - `last`: Masks the last n characters
+  - `corners`: Masks the beginning and end of strings
+  - `between`: Masks the middle portion of strings
+- **Customizable**: Define your own masking strategies
+- **Thread-Safe**: Safe for concurrent use
+- **Lightweight**: No external dependencies
 
-## Usage
+## 🚀 Quick Start
 
 ### Basic Usage
 
@@ -35,15 +38,14 @@ package main
 import (
     "encoding/json"
     "fmt"
-    
     "github.com/MegalLink/gomask/masker"
 )
 
 type User struct {
-    Name     string `mask:"regex,\\b[A-Za-z]+\\b"` // Mask all characters not including spaces
-    Email    string `mask:"regex,^[^@]+" maskTag:"X"` // Mask everything before @ with X
-    Password string `mask:"all"` // Mask all characters
-    Phone    string `mask:"last,4"` // Mask last 4 digits
+    Name     string `mask:"regex,\\b[A-Za-z]+\\b"` // Mask words, leave spaces
+    Email    string `mask:"regex,^[^@]+" maskTag:"X"` // Mask local part of email
+    Password string `mask:"all"`                      // Mask entire string
+    Phone    string `mask:"last,4"`                   // Mask last 4 digits
 }
 
 func main() {
@@ -54,17 +56,14 @@ func main() {
         Phone:    "1234567890",
     }
     
-    // Create a new masker and mask the struct
-    masker := masker.NewMasker()
-    maskedUser := masker.MaskStruct(user).(User)
+    maskedUser := masker.NewMasker().MaskStruct(user).(User)
     
-    // Print the masked user
     maskedJSON, _ := json.MarshalIndent(maskedUser, "", "  ")
     fmt.Println(string(maskedJSON))
 }
 ```
 
-Output:
+**Output:**
 ```json
 {
   "Name": "**** ***",
@@ -74,9 +73,11 @@ Output:
 }
 ```
 
-### Nested Structs
+## 📚 Usage Guide
 
-GoMask supports nested structs and pointers to structs:
+### Working with Nested Structures
+
+GoMask handles nested structs and pointers seamlessly:
 
 ```go
 type Address struct {
@@ -91,6 +92,7 @@ type User struct {
     Address Address
 }
 
+// Usage:
 user := User{
     Name:  "John Doe",
     Email: "john.doe@example.com",
@@ -104,15 +106,17 @@ user := User{
 maskedUser := masker.NewMasker().MaskStruct(user).(User)
 ```
 
-### Custom Masking Strategies
+## 🔧 Custom Masking Strategies
 
-You can create your own masking strategies by implementing the `Masker` interface:
+Easily extend GoMask with your own masking logic:
 
 ```go
+// Define a custom masker
 type MaskCard struct{}
 
+
 func (m *MaskCard) Mask(value string, maskChar string, tags []string) reflect.Value {
-    // Show first 4 and last 4 digits of a card number
+    // Show first 4 and last 4 digits by default
     if len(value) < 8 {
         return reflect.ValueOf(strings.Repeat(maskChar, len(value)-1) + value[len(value)-1:])
     }
@@ -120,7 +124,7 @@ func (m *MaskCard) Mask(value string, maskChar string, tags []string) reflect.Va
     firstVisible := 4
     lastVisible := 4
     
-    // Parse options if provided
+    // Parse custom visibility from tags if provided
     if len(tags) > 1 {
         parts := strings.Split(tags[1], "-")
         if len(parts) == 2 {
@@ -143,98 +147,94 @@ func (m *MaskCard) Mask(value string, maskChar string, tags []string) reflect.Va
 
 // Register and use your custom masker
 type PaymentInfo struct {
-    CardNumber string `mask:"card_number"`
-    CardNumber2 string `mask:"card_number,2-3"` // Show first 2 and last 3 digits, the "-" sign depends of parse options you use in your custom masker function like in the example above at split tags
+    CardNumber  string `mask:"card_number"`
+    CardNumber2 string `mask:"card_number,2-3"` // Custom format: first 2 and last 3 digits visible
 }
 
 masker := masker.NewMasker()
 masker.RegisterMasker("card_number", &MaskCard{})
 
 payment := PaymentInfo{
-    CardNumber: "1234567890123456",
+    CardNumber:  "1234567890123456",
     CardNumber2: "1234567890123456",
 }
 
 maskedPayment := masker.MaskStruct(payment).(PaymentInfo)
-// CardNumber will be "1234********3456"
-// CardNumber2 will be "12***********456"
+// CardNumber: "1234********3456"
+// CardNumber2: "12***********456"
 ```
 
-## Available Masking Methods
+## 📋 Available Masking Methods
 
-### all
-
-Masks all characters in a string.
+### `all`
+Masks all characters in the string.
 
 ```go
-Password string `mask:"all"` // "secret123" -> "*********"
+Password string `mask:"all"` // "secret123" → "*********"
 ```
 
-### regex
-
-Masks characters based on a regular expression pattern.
+### `regex`
+Masks substrings matching the provided regular expression pattern.
 
 ```go
-Email string `mask:"regex,^[^@]+" maskTag:"X"` // "john.doe@example.com" -> "XXXXXXXX@example.com"
+Email string `mask:"regex,^[^@]+" maskTag:"X"` // "john.doe@example.com" → "XXXXXXXX@example.com"
 ```
 
-### first
-
-Masks the first n characters in a string.
+### `first`
+Masks the first n characters of the string.
 
 ```go
-// Default: mask first character
-Phone string `mask:"first"` // "0998695861" -> "*998695861"
+// Mask first character (default)
+Phone string `mask:"first"` // "0998695861" → "*998695861"
 
 // Mask first 5 characters
-Street string `mask:"first,5"` // "Floresta" -> "*****esta"
+Street string `mask:"first,5"` // "Floresta" → "*****esta"
 ```
 
-### last
-
-Masks the last n characters in a string.
+### `last`
+Masks the last n characters of the string.
 
 ```go
-// Default: mask last character
-Country string `mask:"last"` // "Ecuador" -> "Ecuado*"
+// Mask last character (default)
+Country string `mask:"last"` // "Ecuador" → "Ecuado*"
 
 // Mask last 3 characters
-Phone string `mask:"last,3"` // "2999999" -> "2999***"
+Phone string `mask:"last,3"` // "2999999" → "2999***"
 ```
 
-### corners
-
-Masks the first n and last m characters in a string.
+### `corners`
+Masks the first n and last m characters of the string.
 
 ```go
 // Format: corners,n-m
-CreditCard string `mask:"corners,5-4"` // "0455555554459999" -> "*****5555445****"
+CreditCard string `mask:"corners,5-4"` // "0455555554459999" → "*****5555445****"
 ```
 
-### between
-
-Masks all except the first n and last m characters in a string.
+### `between`
+Masks all characters except the first n and last m characters.
 
 ```go
 // Default: keep first and last character
-DogName string `mask:"between"` // "Firulais" -> "F******s"
+DogName string `mask:"between"` // "Firulais" → "F******s"
 
-// Format: between,n-m (keep first n and last m characters)
-DogLastName string `mask:"between,2-3"` // "Wolfenstein" -> "Wo******ein"
+// Custom format: keep first 2 and last 3 characters
+DogLastName string `mask:"between,2-3"` // "Wolfenstein" → "Wo******ein"
 ```
 
-## Custom Mask Character
+## 🎨 Customization
 
-You can specify a custom mask character using the `maskTag` tag:
+### Custom Mask Character
+
+Change the default mask character (`*`) using the `maskTag` tag:
 
 ```go
-CVV string `mask:"all" maskTag:"+"` // "333" -> "+++"
+CVV string `mask:"all" maskTag:"+"` // "333" → "+++"
 ```
 
-## Thread Safety
+## 🔒 Thread Safety
 
-GoMask uses read-write locks to ensure thread safety when registering and retrieving maskers.
+GoMask is safe for concurrent use, utilizing read-write locks to ensure thread safety during masker registration and retrieval.
 
-## License
+## 📄 License
 
-This project is licensed under the MIT License - see the LICENSE file for details.
+This project is open source and available under the [MIT License](LICENSE).
